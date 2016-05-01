@@ -45,9 +45,145 @@ REQUEST_PUZZLE_INT_MASK      = 0x800
 
 .data
 # data things go here
+.align 2
+cloud_data: .space 40
+.align 2
+plant_data: .space 88
 
 .text
 main:
 	# go wild
 	# the world is your oyster :)
-	j	main
+	li	$t4, CLOUD_CHANGE_STATUS_INT_MASK	# cloud change status enable bit
+	or	$t4, $t4, 1							# global interrupt enable
+	mtc0	$t4, $12						# set interrupt mask (Status register)
+
+	la	$t0, plant_data						# fill up plant data
+	sw	$t0, PLANT_SCAN
+	la	$t0, cloud_data						# load cloud data
+	sw	$t0, CLOUD_SCAN						# fill
+	# load cloud location
+	lw	$t1, 8($t0)							# t1 = cloud1_x
+	lw	$t2, 12($t0)						# t2 = cloud1_y
+	li	$t6, 1								# t6 = 1 velocity
+	# load target starting y
+	li	$t5, 130
+
+start_loop:
+	li	$t7, 90								# down
+	sw	$t7, ANGLE($zero)					# set angle down
+	sw	$t6, ANGLE_CONTROL($zero)
+	li	$t7, 10								# set velocity
+	sw	$t7, VELOCITY($zero)
+	lw	$t3, BOT_Y($zero)					# t3 = bot_y
+	ble	$t3, $t5, start_loop				# while (bot_y != target)
+
+find_loop:
+	lw	$t3, BOT_X($zero)					# t3 = bot_x
+	beq	$t1, $t3, pause						# while bot_x != cloud1_x
+	ble	$t1, $t3, set_left					# if (cloud1_x <= bot_x)
+set_right:
+	li	$t7, 0								# right
+	sw	$t7, ANGLE($zero)					# set angle right
+	sw	$t6, ANGLE_CONTROL($zero)
+	j	find_loop
+set_left:
+	li	$t7, 180							# left
+	sw	$t7, ANGLE($zero)					# set angle left
+	sw	$t6, ANGLE_CONTROL($zero)
+	j	find_loop
+
+pause:
+	lw	$t3, BOT_Y($zero)					# t3 = bot_y
+	beq	$t2, $t3, wait						# while bot_y != cloud1_y
+	ble	$t2, $t3, set_down					# if (cloud1_y <= bot_y)
+set_up:
+	li	$t7, 90								# up
+	sw	$t7, ANGLE($zero)					# set angle up
+	sw	$t6, ANGLE_CONTROL($zero)
+	j	pause								# wait for interrupt
+set_down:
+	li	$t7, 270							# down
+	sw	$t7, ANGLE($zero)					# set angle down
+	sw	$t6, ANGLE_CONTROL($zero)
+	j pause
+
+wait:
+	la	$t0, plant_data
+	lw	$t1, 4($t0)							# t1 = plant1_x
+find_plant:
+	lw	$t3, BOT_X($zero)					# t3 = bot_x
+	beq	$t1, $t3, end						# while bot_x != cloud1_x
+	ble	$t1, $t3, turn_left					# if (cloud1_x <= bot_x)
+turn_right:
+	li	$t7, 0								# right
+	sw	$t7, ANGLE($zero)					# set angle right
+	sw	$t6, ANGLE_CONTROL($zero)
+	j	find_plant
+turn_left:
+	li	$t7, 180							# left
+	sw	$t7, ANGLE($zero)					# set angle left
+	sw	$t6, ANGLE_CONTROL($zero)
+	j	find_plant
+end:
+	li	$t7, 270							# turn up
+	sw	$t7, ANGLE($zero)
+	sw	$t6, ANGLE_CONTROL($zero)
+	sw	$t6, VELOCITY($zero)				# set_velocity(+)
+infinite:
+	# note that we infinite loop to avoid stopping the simulation early
+	j	infinite
+
+.kdata				# interrupt handler data (separated just for readability)
+chunkIH:	.space 8	# space for two registers
+non_intrpt_str:	.asciiz "Non-interrupt exception\n"
+unhandled_str:	.asciiz "Unhandled interrupt type\n"
+
+
+.ktext 0x80000180
+interrupt_handler:
+.set noat
+	move	$k1, $at						# Save $at
+.set at
+	la	$k0, chunkIH
+	sw	$a0, 0($k0)							# Get some free registers
+	sw	$a1, 4($k0)							# by storing them to a global variable
+
+	mfc0	$k0, $13						# Get Cause register
+	srl	$a0, $k0, 2
+	and	$a0, $a0, 0xf						# ExcCode field
+	bne	$a0, 0, non_intrpt
+
+interrupt_dispatch:							# Interrupt:
+	mfc0	$k0, $13						# Get Cause register, again
+	beq	$k0, 0, done						# handled all outstanding interrupts
+
+	and	$a0, $k0, CLOUD_CHANGE_STATUS_INT_MASK	#  cloud interrupt?
+	bne	$a0, 0, cloud_interrupt
+
+	# add dispatch for other interrupt types here.
+
+	li	$v0, PRINT_STRING					# Unhandled interrupt types
+	la	$a0, unhandled_str
+	syscall
+	j	done
+
+cloud_interrupt:
+	sw	$a1, CLOUD_CHANGE_STATUS_ACK		# ack
+
+	j	interrupt_dispatch
+
+non_intrpt:									# was some non-interrupt
+	li	$v0, PRINT_STRING
+	la	$a0, non_intrpt_str
+	syscall									# print out an error message
+	# fall through to done
+
+done:
+	la	$k0, chunkIH
+	lw	$a0, 0($k0)							# Restore saved registers
+	lw	$a1, 4($k0)
+.set noat
+	move	$at, $k1						# Restore $at
+.set at
+	eret
