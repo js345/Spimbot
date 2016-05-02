@@ -49,12 +49,17 @@ REQUEST_PUZZLE_INT_MASK      = 0x800
 cloud_data: .space 40
 .align 2
 plant_data: .space 88
+.align 2
+plant_done: .space 4
 
 .text
 main:
 	# go wild
 	# the world is your oyster :)
 	li	$t4, CLOUD_CHANGE_STATUS_INT_MASK	# cloud change status enable bit
+	or  $t4, $t4, PLANT_FULLY_WATERED_INT_MASK
+	or	$t4, $t4, BONK_MASK
+	or	$t4, $t4, OUT_OF_WATER_INT_MASK
 	or	$t4, $t4, 1							# global interrupt enable
 	mtc0	$t4, $12						# set interrupt mask (Status register)
 
@@ -68,6 +73,9 @@ main:
 	li	$t6, 1								# t6 = 1 velocity
 	# load target starting y
 	li	$t5, 130
+	# load index a0 = i, a1 = j, plant, cloud
+	li  $a0, 0
+	li  $a1, 0
 
 start_loop:
 	li	$t7, 90								# down
@@ -110,7 +118,13 @@ set_down:
 
 wait:
 	la	$t0, plant_data
+	add $t0, $t0, $a0						# ith plant
+	add $a0, $a0, 8							# i++
+	blt $a0, 40, skip
+	li  $a0, 0								# reset a0
+skip:
 	lw	$t1, 4($t0)							# t1 = plant1_x
+
 find_plant:
 	lw	$t3, BOT_X($zero)					# t3 = bot_x
 	beq	$t1, $t3, end						# while bot_x != cloud1_x
@@ -132,6 +146,7 @@ end:
 	sw	$t6, VELOCITY($zero)				# set_velocity(+)
 infinite:
 	# note that we infinite loop to avoid stopping the simulation early
+	beq $t0, 1, wait						# if fully watered, find next one
 	j	infinite
 
 .kdata				# interrupt handler data (separated just for readability)
@@ -161,6 +176,9 @@ interrupt_dispatch:							# Interrupt:
 	and	$a0, $k0, CLOUD_CHANGE_STATUS_INT_MASK	#  cloud interrupt?
 	bne	$a0, 0, cloud_interrupt
 
+	and	$a0, $k0, PLANT_FULLY_WATERED_INT_MASK	# 	fully watered?
+	bne	$a0, 0, plant_interrupt
+
 	# add dispatch for other interrupt types here.
 
 	li	$v0, PRINT_STRING					# Unhandled interrupt types
@@ -170,7 +188,18 @@ interrupt_dispatch:							# Interrupt:
 
 cloud_interrupt:
 	sw	$a1, CLOUD_CHANGE_STATUS_ACK		# ack
+	j	interrupt_dispatch
 
+plant_interrupt:
+	sw  $a1, PLANT_FULLY_WATERED_ACK		# ack
+	j   interrupt_dispatch
+
+bonk_interrupt:
+	sw	$a1, BONK_ACK
+	j	interrupt_dispatch
+
+out_interrupt:
+	sw	$a1, OUT_OF_WATER_ACK
 	j	interrupt_dispatch
 
 non_intrpt:									# was some non-interrupt
@@ -178,6 +207,7 @@ non_intrpt:									# was some non-interrupt
 	la	$a0, non_intrpt_str
 	syscall									# print out an error message
 	# fall through to done
+
 
 done:
 	la	$k0, chunkIH
