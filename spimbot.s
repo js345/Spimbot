@@ -66,7 +66,7 @@ main:
 	li	$t4, 10								# t4 = velocity = 10
 	li	$t6, 1								# t6 = 1 angle control
 
-	li	$t5, 130							# load target starting y
+	li	$t5, 150							# load target starting y
 	# load index a0 = index, index < 3
 	li  $a0, 0
 	li  $a1, 0
@@ -87,6 +87,12 @@ cloud:
 	add	$t0, $t0, $a1						# iterator
 	lw	$t1, 8($t0)							# t1 = cloud1_x
 	lw	$t2, 12($t0)						# t2 = cloud1_y
+	la	$t0, plant_data
+	sw	$t0, PLANT_SCAN
+	mul	$a1, $a0, 8
+	add $t0, $t0, $a1						# iterator
+	lw	$t3, 4($t0)
+	beq	$t3, $t1, end						# not watered yet
 
 find_loop:
 	lw	$t3, BOT_X($zero)					# t3 = bot_x
