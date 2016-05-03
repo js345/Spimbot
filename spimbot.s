@@ -63,17 +63,11 @@ main:
 	or	$t4, $t4, 1							# global interrupt enable
 	mtc0	$t4, $12						# set interrupt mask (Status register)
 
-	la	$t0, plant_data						# fill up plant data
-	sw	$t0, PLANT_SCAN
-	la	$t0, cloud_data						# load cloud data
-	sw	$t0, CLOUD_SCAN						# fill
-	# load cloud location
-	lw	$t1, 8($t0)							# t1 = cloud1_x
-	lw	$t2, 12($t0)						# t2 = cloud1_y
+	li	$t4, 10								# t4 = velocity = 10
 	li	$t6, 1								# t6 = 1 angle control
-	# load target starting y
-	li	$t5, 130
-	# load index a0 = i, a1 = j, plant, cloud
+
+	li	$t5, 130							# load target starting y
+	# load index a0 = index, index < 3
 	li  $a0, 0
 	li  $a1, 0
 
@@ -81,10 +75,18 @@ start_loop:
 	li	$t7, 90								# down
 	sw	$t7, ANGLE($zero)					# set angle down
 	sw	$t6, ANGLE_CONTROL($zero)
-	li	$t7, 10								# set velocity
-	sw	$t7, VELOCITY($zero)
+	sw	$t4, VELOCITY($zero)				# set velocity
 	lw	$t3, BOT_Y($zero)					# t3 = bot_y
 	ble	$t3, $t5, start_loop				# while (bot_y != target)
+
+cloud:
+	la	$t0, cloud_data						# load cloud data
+	sw	$t0, CLOUD_SCAN						# fill
+	# load cloud location
+	mul	$a1, $a0, 12
+	add	$t0, $t0, $a1						# iterator
+	lw	$t1, 8($t0)							# t1 = cloud1_x
+	lw	$t2, 12($t0)						# t2 = cloud1_y
 
 find_loop:
 	lw	$t3, BOT_X($zero)					# t3 = bot_x
@@ -104,8 +106,7 @@ set_left:
 pause:
 	lw	$t3, BOT_Y($zero)					# t3 = bot_y
 	beq	$t2, $t3, wait						# while bot_y != cloud1_y
-	li	$t7, 10
-	sw	$t7, VELOCITY($zero)
+	sw	$t4, VELOCITY($zero)
 	ble	$t2, $t3, set_down					# if (cloud1_y <= bot_y)
 set_up:
 	li	$t7, 90								# up
@@ -120,19 +121,15 @@ set_down:
 
 wait:
 	la	$t0, plant_data
-	#add 	$t0, $t0, $a0						# ith plant
 	sw	$t0, PLANT_SCAN
-	#add 	$a0, $a0, 8							# i++
-	#blt 	$a0, 40, skip
-	#li  	$a0, 0								# reset a0
-skip:
+	mul	$a1, $a0, 8
+	add $t0, $t0, $a1						# iterator
 	lw	$t1, 4($t0)							# t1 = plant1_x
 
 find_plant:
 	lw	$t3, BOT_X($zero)					# t3 = bot_x
 	beq	$t1, $t3, end						# while bot_x != cloud1_x
-	li	$t7, 10
-	sw	$t7, VELOCITY($zero)
+	sw	$t4, VELOCITY($zero)
 	ble	$t1, $t3, turn_left					# if (cloud1_x <= bot_x)
 turn_right:
 	li	$t7, 0								# right
@@ -144,17 +141,25 @@ turn_left:
 	sw	$t7, ANGLE($zero)					# set angle left
 	sw	$t6, ANGLE_CONTROL($zero)
 	j	find_plant
+
 end:
+	add	$a0, $a0, 1							# index++
+	blt	$a0, 3, skip
 	li	$t7, 270							# turn up
 	sw	$t7, ANGLE($zero)
 	sw	$t6, ANGLE_CONTROL($zero)
-	li	$t7, 10
-	sw	$t7, VELOCITY($zero)				# set_velocity(+)
+	sw	$t4, VELOCITY($zero)
+	li	$a0, 0								# reset a0
 	li	$a2, 0
+	j	infinite
+skip:
+	j start_loop
+
 infinite:
 	# note that we infinite loop to avoid stopping the simulation early
-	beq 	$a2, 1, pause						# if fully watered, find next one
+	beq	$a2, 1, skip						# if fully watered, find next one
 	j	infinite
+
 
 .kdata				# interrupt handler data (separated just for readability)
 chunkIH:	.space 8	# space for two registers
